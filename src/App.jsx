@@ -1490,6 +1490,28 @@ export default function ScoreboardApp() {
     } catch (e) {}
   };
 
+  // Chrome (and other modern browsers) block top-level navigation straight to
+  // a data: URI opened via target="_blank" — the tab opens but stays blank.
+  // Converting to a real object URL (blob:) first avoids that restriction.
+  const openGuidePdf = () => {
+    if (!guidePdf || !guidePdf.data) return;
+    try {
+      const [header, base64] = guidePdf.data.split(",");
+      const mimeMatch = header.match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : "application/pdf";
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (e) {
+      // Fallback: try the raw data URI directly if conversion somehow fails.
+      window.open(guidePdf.data, "_blank", "noopener,noreferrer");
+    }
+  };
+
   const currentJudgeId =
     session?.role === "judge" ? session.judgeId : session?.role === "admin" ? adminActingJudgeId : null;
   const myLocked = currentJudgeId ? !!judgeLocks[currentJudgeId] : false;
@@ -2456,11 +2478,13 @@ export default function ScoreboardApp() {
           padding: 7px 13px; border-radius: 999px;
           border: 1px solid var(--line); background: rgba(255,255,255,0.5);
           color: var(--teal); font-size: 12.5px; font-weight: 600;
+          font-family: inherit;
           text-decoration: none; cursor: pointer;
           margin-left: auto;
           transition: background 200ms var(--ease), border-color 200ms var(--ease);
         }
         .sb-guidebtn:hover { background: rgba(230,57,70,0.08); border-color: rgba(230,57,70,0.25); }
+        .sb-guidebtn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
         .sb-timerunit { font-size: 11px; color: var(--text-dim); }
         .sb-timerbtn {
           display: flex; align-items: center; justify-content: center;
@@ -2958,14 +2982,9 @@ export default function ScoreboardApp() {
               {String(timerRemainingSec % 60).padStart(2, "0")}
             </div>
             {guidePdf && (
-              <a
-                href={guidePdf.data}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="sb-guidebtn"
-              >
+              <button type="button" onClick={openGuidePdf} className="sb-guidebtn">
                 <FileText size={14} /> Kılavuz
-              </a>
+              </button>
             )}
             {session.role === "admin" && (
               <div className="sb-timercontrols">

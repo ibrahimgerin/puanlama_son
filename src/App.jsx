@@ -556,6 +556,7 @@ const DEFAULT_CONFIG = {
   people: Array.from({ length: 10 }, (_, i) => ({
     name: `Kişi ${i + 1}`,
     groupId: "g1",
+    presGroupId: "pg1",
     photo: "",
     school: "",
     department: "",
@@ -578,10 +579,11 @@ function normalizeConfig(raw) {
     return { name: c.name ?? `Kriter ${i + 1}`, weight: typeof c.weight === "number" ? c.weight : 1, description: c.description ?? "" };
   });
   cfg.people = (cfg.people || []).map((p, i) => {
-    if (typeof p === "string") return { name: p, groupId: cfg.groups[0].id, photo: "", school: "", department: "", featured: false };
+    if (typeof p === "string") return { name: p, groupId: cfg.groups[0].id, presGroupId: "pg1", photo: "", school: "", department: "", featured: false };
     return {
       name: p.name ?? `Kişi ${i + 1}`,
       groupId: p.groupId ?? cfg.groups[0].id,
+      presGroupId: p.presGroupId ?? "pg1",
       photo: p.photo ?? "",
       school: p.school ?? "",
       department: p.department ?? "",
@@ -668,6 +670,24 @@ async function setWithRetry(key, value, delayMs = 900) {
   } catch (e) {
     return null;
   }
+}
+
+// Very small formatter: turns **kalın gibi** into <strong>, leaves everything
+// else as plain text. Line breaks are handled separately via CSS
+// (white-space: pre-wrap) so we don't need to touch them here.
+function RichText({ text }) {
+  if (!text) return null;
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+          return <strong key={i}>{part.slice(2, -2)}</strong>;
+        }
+        return <React.Fragment key={i}>{part}</React.Fragment>;
+      })}
+    </>
+  );
 }
 
 function Avatar({ photo, name, size = 40, shape = "circle" }) {
@@ -1237,6 +1257,7 @@ export default function ScoreboardApp() {
   const [compareSelection, setCompareSelection] = useState([]);
   const [showReport, setShowReport] = useState(false);
   const [scoreGroupFilter, setScoreGroupFilter] = useState("all");
+  const [scorePresGroupFilter, setScorePresGroupFilter] = useState("all");
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [ratings, setRatings] = useState({});
   const [adminActingJudgeId, setAdminActingJudgeId] = useState(null);
@@ -1257,11 +1278,15 @@ export default function ScoreboardApp() {
   const [exportError, setExportError] = useState("");
   const [draftConfig, setDraftConfig] = useState(DEFAULT_CONFIG);
   const ratingsRef = useRef({});
+  const presRatingsRef = useRef({});
   const configRef = useRef(DEFAULT_CONFIG);
 
   useEffect(() => {
     ratingsRef.current = ratings;
   }, [ratings]);
+  useEffect(() => {
+    presRatingsRef.current = presRatings;
+  }, [presRatings]);
   useEffect(() => {
     configRef.current = config;
   }, [config]);
@@ -1544,7 +1569,7 @@ export default function ScoreboardApp() {
       return;
     }
     const key = `pr:${currentJudgeId}:${selectedPresGroup}`;
-    const existing = presRatings[key];
+    const existing = presRatingsRef.current[key];
     if (existing && existing.scores) {
       setDraftPresScores({ ...existing.scores });
       setDraftPresNote(existing.note || "");
@@ -1554,7 +1579,8 @@ export default function ScoreboardApp() {
       setDraftPresScores(initial);
       setDraftPresNote("");
     }
-  }, [currentJudgeId, selectedPresGroup, presRatings]);
+    // eslint-disable-next-line
+  }, [currentJudgeId, selectedPresGroup]);
 
   const savePresRating = async () => {
     if (!currentJudgeId || selectedPresGroup === null || scoringLocked) return;
@@ -1780,14 +1806,10 @@ export default function ScoreboardApp() {
     ),
   }));
 
-  const scoreVisiblePeopleBase =
-    scoreGroupFilter === "all"
-      ? config.people.map((p, i) => ({ ...p, idx: i }))
-      : config.people
-          .map((p, i) => ({ ...p, idx: i }))
-          .filter((p) =>
-            scoreGroupFilter === "__unassigned" ? !knownGroupIds.has(p.groupId) : p.groupId === scoreGroupFilter
-          );
+  const scoreVisiblePeopleBase = config.people
+    .map((p, i) => ({ ...p, idx: i }))
+    .filter((p) => (scoreGroupFilter === "all" ? true : scoreGroupFilter === "__unassigned" ? !knownGroupIds.has(p.groupId) : p.groupId === scoreGroupFilter))
+    .filter((p) => (scorePresGroupFilter === "all" ? true : p.presGroupId === scorePresGroupFilter));
 
   const scoreVisiblePeople = showOnlyUnscored
     ? scoreVisiblePeopleBase.filter((p) => !ratings[`r:${currentJudgeId}:${p.idx}`])
@@ -2340,7 +2362,7 @@ export default function ScoreboardApp() {
         .sb-slider-row { margin-bottom: 22px; }
         .sb-slider-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .sb-crit-name { font-weight: 600; font-size: 14px; }
-        .sb-critdesc { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin: -6px 0 10px; }
+        .sb-critdesc { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin: -6px 0 10px; white-space: pre-wrap; }
         .sb-weightbadge {
           display: inline-block;
           margin-left: 7px;
@@ -3119,6 +3141,25 @@ export default function ScoreboardApp() {
                     ))}
                   </div>
                 )}
+                {config.presentationGroups.length > 1 && (
+                  <div className="sb-chiprow" style={{ marginBottom: 12 }}>
+                    <button
+                      className={`sb-chip ${scorePresGroupFilter === "all" ? "active" : ""}`}
+                      onClick={() => setScorePresGroupFilter("all")}
+                    >
+                      Tüm masalar
+                    </button>
+                    {config.presentationGroups.map((g) => (
+                      <button
+                        key={g.id}
+                        className={`sb-chip ${scorePresGroupFilter === g.id ? "active" : ""}`}
+                        onClick={() => setScorePresGroupFilter(g.id)}
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {scoreVisiblePeople.length === 0 ? (
                   <div className="sb-empty">🎉 Tüm değerlendirmeler tamamlandı!</div>
                 ) : (
@@ -3199,7 +3240,7 @@ export default function ScoreboardApp() {
                           {val.toFixed(0)}
                         </span>
                       </div>
-                      {c.description && <div className="sb-critdesc">{c.description}</div>}
+                      {c.description && <div className="sb-critdesc"><RichText text={c.description} /></div>}
                       <div className="sb-scoreboxes">
                         {Array.from({ length: 5 }, (_, i) => i + 1).map((n) => (
                           <button
@@ -3313,7 +3354,7 @@ export default function ScoreboardApp() {
                           {val.toFixed(0)}
                         </span>
                       </div>
-                      {c.description && <div className="sb-critdesc">{c.description}</div>}
+                      {c.description && <div className="sb-critdesc"><RichText text={c.description} /></div>}
                       <div className="sb-scoreboxes">
                         {Array.from({ length: 5 }, (_, i) => i + 1).map((n) => (
                           <button
@@ -3671,6 +3712,14 @@ export default function ScoreboardApp() {
                     <button
                       className="sb-iconbtn"
                       onClick={() => {
+                        const hasScored =
+                          Object.keys(ratings).some((k) => k.startsWith(`r:${j.id}:`)) ||
+                          Object.keys(presRatings).some((k) => k.startsWith(`pr:${j.id}:`));
+                        if (hasScored) {
+                          if (!window.confirm(`${j.name} zaten puan girmiş. Silersen bu puanlar sonuçlardan kaybolur (veri silinmez ama artık hesaba katılmaz). Devam edilsin mi?`)) {
+                            return;
+                          }
+                        }
                         const next = { ...draftConfig, judges: draftConfig.judges.filter((_, idx) => idx !== i) };
                         saveConfig(next);
                       }}
@@ -3777,7 +3826,17 @@ export default function ScoreboardApp() {
                       onClick={() => {
                         if (draftConfig.presentationGroups.length <= 1) return;
                         const remaining = draftConfig.presentationGroups.filter((x) => x.id !== g.id);
-                        saveConfig({ ...draftConfig, presentationGroups: remaining });
+                        const fallbackId = remaining[0].id;
+                        const nextPeople = draftConfig.people.map((p) =>
+                          p.presGroupId === g.id ? { ...p, presGroupId: fallbackId } : p
+                        );
+                        const hasRatings = Object.keys(presRatings).some((k) => k.endsWith(`:${g.id}`));
+                        if (hasRatings) {
+                          if (!window.confirm(`"${g.name}" grubu için zaten girilmiş puanlar var. Silersen bu puanlar sonuçlardan kaybolur (veri silinmez ama artık hesaba katılmaz). Devam edilsin mi?`)) {
+                            return;
+                          }
+                        }
+                        saveConfig({ ...draftConfig, presentationGroups: remaining, people: nextPeople });
                       }}
                       aria-label="Sunum grubunu sil"
                     >
@@ -3840,6 +3899,7 @@ export default function ScoreboardApp() {
                       <select
                         className="sb-select"
                         value={p.groupId}
+                        title="Grup"
                         onChange={(e) => {
                           const next = { ...draftConfig, people: [...draftConfig.people] };
                           next.people[i] = { ...p, groupId: e.target.value };
@@ -3847,6 +3907,22 @@ export default function ScoreboardApp() {
                         }}
                       >
                         {draftConfig.groups.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="sb-select"
+                        value={p.presGroupId}
+                        title="Sunum Grubu (Masa)"
+                        onChange={(e) => {
+                          const next = { ...draftConfig, people: [...draftConfig.people] };
+                          next.people[i] = { ...p, presGroupId: e.target.value };
+                          saveConfig(next);
+                        }}
+                      >
+                        {draftConfig.presentationGroups.map((g) => (
                           <option key={g.id} value={g.id}>
                             {g.name}
                           </option>
@@ -3867,6 +3943,20 @@ export default function ScoreboardApp() {
                       <button
                         className="sb-iconbtn"
                         onClick={() => {
+                          const isLast = i === draftConfig.people.length - 1;
+                          const laterHaveRatings =
+                            !isLast &&
+                            Object.keys(ratings).some((k) => {
+                              const parts = k.split(":");
+                              return Number(parts[2]) > i;
+                            });
+                          if (laterHaveRatings) {
+                            window.alert(
+                              "Bu kişiyi silemezsin: listede ondan sonra gelen kişilerin sırası kayar ve onlara ait mevcut puanlar yanlış kişiyle eşleşir. Bunun yerine ismini \"(iptal)\" gibi değiştirip listede bırakmanı öneririz."
+                            );
+                            return;
+                          }
+                          if (!window.confirm(`"${p.name}" silinsin mi?`)) return;
                           const next = { ...draftConfig, people: draftConfig.people.filter((_, idx) => idx !== i) };
                           saveConfig(next);
                         }}
@@ -3908,7 +3998,7 @@ export default function ScoreboardApp() {
                       ...draftConfig,
                       people: [
                         ...draftConfig.people,
-                        { name: `Kişi ${draftConfig.people.length + 1}`, groupId: draftConfig.groups[0].id, photo: "", school: "", department: "", featured: false },
+                        { name: `Kişi ${draftConfig.people.length + 1}`, groupId: draftConfig.groups[0].id, presGroupId: draftConfig.presentationGroups[0]?.id ?? "pg1", photo: "", school: "", department: "", featured: false },
                       ],
                     })
                   }
@@ -3964,10 +4054,10 @@ export default function ScoreboardApp() {
                     </div>
                     <textarea
                       className="sb-notearea"
-                      style={{ marginTop: 8, minHeight: 44, fontSize: 12.5 }}
+                      style={{ marginTop: 8, minHeight: 64, fontSize: 12.5 }}
                       value={c.description || ""}
-                      placeholder="Bu kriter için açıklama (hakem puan verirken görecek, opsiyonel)"
-                      rows={2}
+                      placeholder="Bu kriter için açıklama (opsiyonel). Kalın yazmak için **kelime** kullan, Enter ile alt satıra geç."
+                      rows={3}
                       onChange={(e) => {
                         const next = { ...draftConfig, criteria: [...draftConfig.criteria] };
                         next.criteria[i] = { ...c, description: e.target.value };
@@ -3979,6 +4069,8 @@ export default function ScoreboardApp() {
                 ))}
                 <div className="sb-qrhint" style={{ textAlign: "left", margin: "2px 0 4px" }}>
                   Sağdaki sayı ağırlık çarpanıdır — 1 normal, 2 iki kat, 0.5 yarı ağırlık gibi. Genel puan bu ağırlıklara göre hesaplanır.
+                  <br />
+                  <b>Dikkat:</b> Puanlama başladıktan sonra bir kriterin adını değiştirmek, o kritere daha önce girilmiş puanları hesaplamadan düşürür. Mümkünse kriterleri etkinlik başlamadan önce netleştirin.
                 </div>
                 <button
                   className="sb-addbtn"
@@ -4037,10 +4129,10 @@ export default function ScoreboardApp() {
                     </div>
                     <textarea
                       className="sb-notearea"
-                      style={{ marginTop: 8, minHeight: 44, fontSize: 12.5 }}
+                      style={{ marginTop: 8, minHeight: 64, fontSize: 12.5 }}
                       value={c.description || ""}
-                      placeholder="Bu kriter için açıklama (hakem puan verirken görecek, opsiyonel)"
-                      rows={2}
+                      placeholder="Bu kriter için açıklama (opsiyonel). Kalın yazmak için **kelime** kullan, Enter ile alt satıra geç."
+                      rows={3}
                       onChange={(e) => {
                         const next = { ...draftConfig, presentationCriteria: [...draftConfig.presentationCriteria] };
                         next.presentationCriteria[i] = { ...c, description: e.target.value };
@@ -4050,6 +4142,9 @@ export default function ScoreboardApp() {
                     />
                   </div>
                 ))}
+                <div className="sb-qrhint" style={{ textAlign: "left", margin: "2px 0 4px" }}>
+                  <b>Dikkat:</b> Puanlama başladıktan sonra bir kriterin adını değiştirmek, o kritere daha önce girilmiş puanları hesaplamadan düşürür.
+                </div>
                 <button
                   className="sb-addbtn"
                   onClick={() =>

@@ -1680,14 +1680,56 @@ export default function ScoreboardApp() {
   };
 
   const clearAllRatings = async () => {
-    if (!window.confirm("Tüm puanlar silinsin mi? Bu işlem geri alınamaz.")) return;
+    if (!window.confirm("Tüm puanlar (kişi + sunum) silinsin mi? Bu işlem geri alınamaz.")) return;
     try {
-      const list = await storage.list("r:", true);
-      if (list && list.keys) {
-        await Promise.all(list.keys.map((k) => storage.delete(k, true).catch(() => {})));
+      const [listR, listPR] = await Promise.all([
+        storage.list("r:", true),
+        storage.list("pr:", true),
+      ]);
+      const allKeys = [...(listR?.keys || []), ...(listPR?.keys || [])];
+      if (allKeys.length > 0) {
+        await Promise.all(allKeys.map((k) => storage.delete(k, true).catch(() => {})));
       }
       setRatings({});
+      setPresRatings({});
     } catch (e) {}
+  };
+
+  const [factoryResetting, setFactoryResetting] = useState(false);
+
+  const factoryResetAll = async () => {
+    const confirmation = window.prompt(
+      'Bu işlem TÜM verileri kalıcı olarak siler: tüm puanlar, notlar, hakemler, yarışmacılar, gruplar, kriterler, kilitler, sayaç ve kılavuz PDF\'i. Sistem sıfırdan başlar ve GERİ ALINAMAZ.\n\nOnaylamak için büyük harflerle "SIFIRLA" yazın:'
+    );
+    if (confirmation !== "SIFIRLA") return;
+
+    setFactoryResetting(true);
+    try {
+      const prefixes = ["r:", "pr:", "jl:"];
+      const keyLists = await Promise.all(prefixes.map((p) => storage.list(p, true).catch(() => null)));
+      const allKeys = keyLists.flatMap((l) => l?.keys || []);
+      await Promise.all([
+        ...allKeys.map((k) => storage.delete(k, true).catch(() => {})),
+        storage.delete("timer", true).catch(() => {}),
+        storage.delete("guide_pdf", true).catch(() => {}),
+      ]);
+      await storage.set("config", JSON.stringify(DEFAULT_CONFIG), true);
+
+      setRatings({});
+      setPresRatings({});
+      setJudgeLocks({});
+      setTimer({ durationSec: 300, endAt: null, running: false });
+      setGuidePdf(null);
+      setConfig(DEFAULT_CONFIG);
+      setDraftConfig(DEFAULT_CONFIG);
+      setSelectedPerson(null);
+      setSelectedPresGroup(null);
+      setAdminActingJudgeId(null);
+      window.alert("Sistem tamamen sıfırlandı.");
+    } catch (e) {
+      window.alert("Sıfırlama sırasında bir hata oluştu: " + (e?.message || "bilinmeyen hata"));
+    }
+    setFactoryResetting(false);
   };
 
   function personStats(personIdx) {
@@ -2734,6 +2776,13 @@ export default function ScoreboardApp() {
           border: 1px solid rgba(220,38,38,0.4); background: rgba(220,38,38,0.08);
           color: var(--danger); font-weight: 600; font-size: 13px; cursor: pointer; margin-top: 8px;
         }
+        .sb-factoryresetbtn {
+          background: var(--danger);
+          border-color: var(--danger);
+          color: #ffffff;
+          letter-spacing: 0.03em;
+        }
+        .sb-factoryresetbtn:disabled { opacity: 0.6; cursor: default; }
 
         .sb-footer {
           margin-top: 40px;
@@ -4248,6 +4297,17 @@ export default function ScoreboardApp() {
               <div className="sb-label">Tehlikeli Bölge</div>
               <button className="sb-dangerbtn" onClick={clearAllRatings}>
                 <RotateCcw size={15} /> Tüm puanları sıfırla
+              </button>
+              <div className="sb-qrhint" style={{ textAlign: "left", margin: "14px 0 8px" }}>
+                Aşağıdaki buton sadece puanları değil, <b>hakemleri, yarışmacıları, grupları,
+                kriterleri ve tüm ayarları</b> da siler — sistemi sıfırdan kurar.
+              </div>
+              <button
+                className="sb-dangerbtn sb-factoryresetbtn"
+                onClick={factoryResetAll}
+                disabled={factoryResetting}
+              >
+                <Trash2 size={15} /> {factoryResetting ? "Sıfırlanıyor…" : "TÜM SİSTEMİ SIFIRLA"}
               </button>
             </div>
           </>
